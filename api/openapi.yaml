@@ -1,0 +1,793 @@
+openapi: 3.1.0
+info:
+  contact:
+    name: General Liquidity
+    url: https://generalliquidity.com
+  description: |
+    General Liquidity (GL) is the governed, unified interface for the machine economy.
+    A caller submits a signed `Intent`; the sovereign gate decides and only the server
+    holds the settle primitive — the caller never reaches it (DESIGN §7, sovereign
+    settle-separation).
+
+    This document is the **single source of truth** for the GL surface. The typed SDK
+    (`packages/sdk`) and the MCP server (`packages/mcp`) are generated projections of
+    this spec via Speakeasy (BUILD-PLAN §5).
+
+    Naming is canonical per `docs/NAMING.md`: verbs are single common English words
+    (`resolve`, `pay`, `verify`, `disclose`, `buy`, `quote`); nouns are concrete singular
+    domain objects (`Intent`, `Mandate`, `Receipt`, `Counterparty`). The wire is
+    `snake_case`; the TypeScript SDK presents `camelCase`. Vendor/protocol names appear
+    only as lowercase `RailId` values, never as verbs or types.
+  license:
+    name: Apache-2.0
+  title: General Liquidity — The Machine Economy API
+  version: 2026-07-22
+servers:
+- description: Hosted gateway (holds the settle primitive).
+  url: https://api.generalliquidity.com
+- description: Sandbox / testnet gateway.
+  url: https://sandbox.api.generalliquidity.com
+security:
+- bearerAuth: []
+tags:
+- description: "Resolve, verify, and disclose counterparty identity + provenance."
+  name: identity
+- description: Submit a signed Intent to the sovereign gate for settlement.
+  name: money
+- description: Merchant checkout over ACP / UCP. Beta.
+  name: commerce
+- description: "Read the signed, hash-linked audit trail."
+  name: governance
+paths:
+  /resolve:
+    post:
+      description: |
+        Normalize a counterparty reference (A2A card · signed disclosure · CAIP account)
+        into one identity, its accepted rails, and trust signals. Read-only.
+      operationId: resolve
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/resolve_request'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Counterparty'
+          description: The normalized counterparty.
+        "400":
+          $ref: '#/components/responses/Problem'
+        "401":
+          $ref: '#/components/responses/Problem'
+        "404":
+          $ref: '#/components/responses/Problem'
+        "429":
+          $ref: '#/components/responses/Problem'
+      summary: Normalize any counterparty reference into one identity.
+      tags:
+      - identity
+  /pay:
+    post:
+      description: |
+        Submit a signed `Intent`. The sovereign gate evaluates mandate · caps · risk ·
+        velocity · deny-list over the six irreducible `Terms`. On `allow` it settles on
+        the routed rail and returns a durable `Receipt`. On `confirm` it returns a
+        human-approval requirement (RFC 7807). On `deny` it refuses. The caller never
+        holds a settle primitive.
+      operationId: pay
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Intent'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Receipt'
+          description: "Settled. A durable, machine-parseable Receipt."
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Decision'
+          description: Gate returned `confirm` — human approval required before settlement.
+        "400":
+          $ref: '#/components/responses/Problem'
+        "401":
+          $ref: '#/components/responses/Problem'
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+          description: Gate returned `deny`. The Intent falls outside mandate/policy.
+        "409":
+          $ref: '#/components/responses/Problem'
+        "422":
+          $ref: '#/components/responses/Problem'
+        "429":
+          $ref: '#/components/responses/Problem'
+      summary: Submit a signed Intent; the gate decides and settles.
+      tags:
+      - money
+  /verify:
+    post:
+      description: |
+        Check a counterparty's signed `Disclosure` against policy — identity, provenance,
+        and enforcement proof — returning a `Decision`.
+      operationId: verify
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Disclosure'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Decision'
+          description: The gate's decision on the disclosure.
+        "400":
+          $ref: '#/components/responses/Problem'
+        "401":
+          $ref: '#/components/responses/Problem'
+        "429":
+          $ref: '#/components/responses/Problem'
+      summary: Check a counterparty's signed disclosure against policy.
+      tags:
+      - identity
+  /disclose:
+    post:
+      description: |
+        Produce GL's own signed `Disclosure`: what this agent is and what it is
+        authorized to do. Read-only with respect to value.
+      operationId: disclose
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Disclosure'
+          description: The signed self-description.
+        "401":
+          $ref: '#/components/responses/Problem'
+      summary: Produce GL's own signed disclosure.
+      tags:
+      - identity
+  /audit:
+    get:
+      operationId: audit
+      parameters:
+      - description: Filter events to a single Intent's idempotency key.
+        explode: true
+        in: query
+        name: intent_key
+        required: false
+        schema:
+          type: string
+        style: form
+      - explode: true
+        in: query
+        name: limit
+        required: false
+        schema:
+          default: 100
+          maximum: 1000
+          minimum: 1
+          type: integer
+        style: form
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/AuditEvent'
+                type: array
+          description: A page of signed audit events.
+        "401":
+          $ref: '#/components/responses/Problem'
+        "429":
+          $ref: '#/components/responses/Problem'
+      summary: "Read the signed, hash-linked audit trail."
+      tags:
+      - governance
+  /buy:
+    post:
+      description: |
+        Beta. Drive a merchant checkout (ACP · UCP) to a completed `Order`; calls `pay`
+        for the authorize/settle beats. Documented but not yet stable.
+      operationId: buy
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Intent'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+          description: The completed order.
+        "400":
+          $ref: '#/components/responses/Problem'
+        "401":
+          $ref: '#/components/responses/Problem'
+        "403":
+          $ref: '#/components/responses/Problem'
+        "409":
+          $ref: '#/components/responses/Problem'
+        "429":
+          $ref: '#/components/responses/Problem'
+      summary: Drive a merchant checkout to a completed Order. (Beta)
+      tags:
+      - commerce
+      x-beta: true
+  /quote:
+    post:
+      description: |
+        Beta. Get a server-authoritative priced `Cart` (tax, inventory, fulfillment
+        computed by the merchant) before committing to `buy`.
+      operationId: quote
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/quote_request'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Cart'
+          description: A server-authoritative priced cart.
+        "400":
+          $ref: '#/components/responses/Problem'
+        "401":
+          $ref: '#/components/responses/Problem'
+        "429":
+          $ref: '#/components/responses/Problem'
+      summary: Get a server-authoritative priced cart before buy. (Beta)
+      tags:
+      - commerce
+      x-beta: true
+components:
+  parameters:
+    IdempotencyKey:
+      description: |
+        Client-generated, server-enforced idempotency key. Required on all mutating
+        operations (`pay`, `buy`) — on a payment path this is a correctness guarantee
+        against double-spend, not a convenience.
+      explode: false
+      in: header
+      name: Idempotency-Key
+      required: true
+      schema:
+        minLength: 1
+        type: string
+      style: simple
+  responses:
+    Problem:
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+      description: RFC 7807 problem detail.
+  schemas:
+    RailId:
+      description: A payment rail behind pay()/buy(). The only place vendor/protocol
+        names appear.
+      enum:
+      - x402
+      - mpp
+      - ap2
+      - acp
+      - ucp
+      - card
+      - onchain
+      type: string
+    Outcome:
+      description: The gate's verdict. Deny-first.
+      enum:
+      - allow
+      - confirm
+      - deny
+      type: string
+    Reversibility:
+      enum:
+      - reversible
+      - irreversible
+      type: string
+    Finality:
+      enum:
+      - instant
+      - deferred
+      type: string
+    CapitalSource:
+      description: Who fronts capital across the settlement.
+      enum:
+      - payer
+      - facilitator
+      - merchant_of_record
+      - solver
+      type: string
+    Presence:
+      description: Human-presence requirement at authorization time.
+      enum:
+      - present
+      - delegated
+      type: string
+    Amount:
+      additionalProperties: false
+      example:
+        asset: asset
+        value: value
+      properties:
+        value:
+          description: "Minor units / atomic, carried as a string to avoid float loss."
+          type: string
+        asset:
+          description: Currency code or CAIP-19 asset id.
+          type: string
+      required:
+      - asset
+      - value
+    Terms:
+      additionalProperties: false
+      description: |
+        The six irreducible fields — explicit on every Intent and Receipt, never
+        silently defaulted. This is what the Gate reasons over.
+      example:
+        credential: credential
+        capital_source: payer
+        rail: null
+        reversibility: reversible
+        finality: instant
+        presence: present
+      properties:
+        reversibility:
+          $ref: '#/components/schemas/Reversibility'
+        finality:
+          $ref: '#/components/schemas/Finality'
+        credential:
+          description: "Authorization model id, e.g. \"eip3009\" | \"vc-mandate\"\
+            \ | \"http-sig\"."
+          type: string
+        rail:
+          $ref: '#/components/schemas/RailId'
+        capital_source:
+          $ref: '#/components/schemas/CapitalSource'
+        presence:
+          $ref: '#/components/schemas/Presence'
+      required:
+      - capital_source
+      - credential
+      - finality
+      - presence
+      - rail
+      - reversibility
+    Mandate:
+      additionalProperties: {}
+      description: "Operator-granted, scoped, capped, expiring spend authority."
+      properties:
+        id:
+          type: string
+        payees:
+          description: Allowed counterparties (CAIP-10 where on-chain).
+          items:
+            type: string
+        per_tx_cap:
+          $ref: '#/components/schemas/Amount'
+        per_period_cap:
+          $ref: '#/components/schemas/Amount'
+        period:
+          description: ISO-8601 duration for the period cap window.
+        expires_at:
+          format: date-time
+        constraints:
+          additionalProperties: {}
+      required:
+      - expires_at
+      - id
+      - payees
+      - per_period_cap
+      - per_tx_cap
+      - period
+    Grant:
+      additionalProperties: false
+      description: An operator-counter-signed delegation of scope to an agent key.
+      example:
+        expires_at: 2000-01-23T04:56:07.000+00:00
+        agent_id: agent_id
+        signature: signature
+        mandate_id: mandate_id
+      properties:
+        agent_id:
+          type: string
+        mandate_id:
+          type: string
+        expires_at:
+          format: date-time
+          type: string
+        signature:
+          type: string
+      required:
+      - agent_id
+      - expires_at
+      - mandate_id
+      - signature
+    Envelope:
+      additionalProperties: false
+      description: The layered signed delegation wrapping an Intent — identity + mandate
+        + provenance.
+      example:
+        signature: signature
+        identity: identity
+        mandate_id: mandate_id
+        grant:
+          expires_at: 2000-01-23T04:56:07.000+00:00
+          agent_id: agent_id
+          signature: signature
+          mandate_id: mandate_id
+      properties:
+        identity:
+          description: "Caller agent id (signed disclosure / ERC-8004, CAIP-addressed)."
+          type: string
+        mandate_id:
+          type: string
+        grant:
+          $ref: '#/components/schemas/Grant'
+        signature:
+          type: string
+      required:
+      - grant
+      - identity
+      - mandate_id
+      - signature
+    Intent:
+      additionalProperties: false
+      description: A signed request to move value. Input to pay(); never carries a
+        settle primitive.
+      example:
+        payee: payee
+        amount:
+          asset: asset
+          value: value
+        envelope:
+          signature: signature
+          identity: identity
+          mandate_id: mandate_id
+          grant:
+            expires_at: 2000-01-23T04:56:07.000+00:00
+            agent_id: agent_id
+            signature: signature
+            mandate_id: mandate_id
+        purpose: purpose
+        terms:
+          credential: credential
+          capital_source: payer
+          rail: null
+          reversibility: reversible
+          finality: instant
+          presence: present
+        idempotency_key: idempotency_key
+      properties:
+        idempotency_key:
+          type: string
+        payee:
+          description: Resolved to a CAIP-10 account where the rail is on-chain.
+          type: string
+        amount:
+          $ref: '#/components/schemas/Amount'
+        purpose:
+          type: string
+        terms:
+          $ref: '#/components/schemas/Terms'
+        envelope:
+          $ref: '#/components/schemas/Envelope'
+      required:
+      - amount
+      - envelope
+      - idempotency_key
+      - payee
+      - purpose
+      - terms
+    Decision:
+      additionalProperties: false
+      description: The gate's decision on an Intent.
+      example:
+        reasons:
+        - reasons
+        - reasons
+        mandate_id: mandate_id
+        outcome: allow
+      properties:
+        outcome:
+          $ref: '#/components/schemas/Outcome'
+        reasons:
+          items:
+            type: string
+          type: array
+        mandate_id:
+          type: string
+      required:
+      - mandate_id
+      - outcome
+      - reasons
+    Receipt:
+      additionalProperties: false
+      description: "Durable, machine-parseable proof of settlement."
+      example:
+        reference: reference
+        intent_key: intent_key
+        terms:
+          credential: credential
+          capital_source: payer
+          rail: null
+          reversibility: reversible
+          finality: instant
+          presence: present
+        rail: x402
+        enforcement: enforcement
+        settled_at: 2000-01-23T04:56:07.000+00:00
+      properties:
+        intent_key:
+          type: string
+        rail:
+          $ref: '#/components/schemas/RailId'
+        reference:
+          description: Rail settlement reference / on-chain tx hash.
+          type: string
+        terms:
+          $ref: '#/components/schemas/Terms'
+        settled_at:
+          format: date-time
+          type: string
+        enforcement:
+          description: "Proof-of-Enforcement hash, byte-identical between emitter\
+            \ and verifier."
+          type: string
+      required:
+      - enforcement
+      - intent_key
+      - rail
+      - reference
+      - settled_at
+      - terms
+    Disclosure:
+      additionalProperties: {}
+      description: A signed self-description (identity + provenance). GL's disclosure
+        format.
+      example:
+        agent_id: agent_id
+        signature: signature
+        document: "{}"
+      properties:
+        agent_id:
+          description: Equals the ed25519 public key.
+        document:
+          additionalProperties: false
+        signature:
+          type: string
+      required:
+      - agent_id
+      - document
+      - signature
+    Counterparty:
+      additionalProperties: {}
+      description: "A normalized, resolved identity + accepted rails + trust."
+      example:
+        trust: "{}"
+        capabilities:
+        - capabilities
+        - capabilities
+        rails:
+        - x402
+        - x402
+        id: id
+        transport: a2a
+      properties:
+        id:
+          type: string
+        transport:
+          enum:
+          - a2a
+          - disclosure
+          - caip
+        capabilities:
+          items: {}
+        rails:
+          items:
+            $ref: '#/components/schemas/RailId'
+        trust:
+          additionalProperties: false
+      required:
+      - capabilities
+      - id
+      - rails
+      - transport
+    AuditEvent:
+      additionalProperties: {}
+      description: "A single signed, hash-linked entry in the audit trail."
+      example:
+        at: 2000-01-23T04:56:07.000+00:00
+        intent_key: intent_key
+        payload: "{}"
+        prev: prev
+        type: type
+      properties:
+        type:
+          description: "Monotonic wire event type, e.g. \"intent.gated\" | \"intent.settled\"\
+            ."
+        at:
+          format: date-time
+        intent_key:
+          type: string
+        prev:
+          description: HMAC hash of the previous entry — the hash-link.
+        payload:
+          additionalProperties: false
+      required:
+      - at
+      - payload
+      - type
+    Order:
+      additionalProperties: false
+      description: The completed result of buy(). Beta.
+      example:
+        receipt:
+          reference: reference
+          intent_key: intent_key
+          terms:
+            credential: credential
+            capital_source: payer
+            rail: null
+            reversibility: reversible
+            finality: instant
+            presence: present
+          rail: x402
+          enforcement: enforcement
+          settled_at: 2000-01-23T04:56:07.000+00:00
+        id: id
+        cart:
+          total:
+            asset: asset
+            value: value
+          expires_at: 2000-01-23T04:56:07.000+00:00
+          id: id
+          line_items:
+          - "{}"
+          - "{}"
+        status: pending
+      properties:
+        id:
+          type: string
+        status:
+          enum:
+          - pending
+          - authorized
+          - completed
+          - cancelled
+          type: string
+        receipt:
+          $ref: '#/components/schemas/Receipt'
+        cart:
+          $ref: '#/components/schemas/Cart'
+      required:
+      - id
+      - status
+    Cart:
+      additionalProperties: {}
+      description: A server-authoritative priced checkout state. Beta.
+      example:
+        total:
+          asset: asset
+          value: value
+        expires_at: 2000-01-23T04:56:07.000+00:00
+        id: id
+        line_items:
+        - "{}"
+        - "{}"
+      properties:
+        id:
+          type: string
+        total:
+          $ref: '#/components/schemas/Amount'
+        line_items:
+          items:
+            additionalProperties: false
+        expires_at:
+          format: date-time
+      required:
+      - id
+      - total
+    Proof:
+      additionalProperties: {}
+      description: A falsifiable Proof-of-Enforcement record binding authorization
+        scope to execution outcome.
+      properties:
+        policy_hash:
+          description: Byte-identical between the enforcement emitter and the independent
+            verifier.
+        intent_key:
+          type: string
+        verified: {}
+      required:
+      - intent_key
+      - policy_hash
+    Problem:
+      additionalProperties: false
+      description: |
+        RFC 7807 problem detail. For an agent the error IS the recovery instruction:
+        `code` is a stable machine token to branch on and `retry_after` is a valid-retry hint.
+      properties:
+        type:
+          default: about:blank
+          description: A URI reference identifying the problem type.
+          format: uri
+          type: string
+        title:
+          description: "Short, human-readable summary of the problem type."
+          type: string
+        status:
+          description: HTTP status code.
+          maximum: 599
+          minimum: 100
+          type: integer
+        detail:
+          description: Human-readable explanation specific to this occurrence.
+          type: string
+        instance:
+          format: uri
+          type: string
+        code:
+          description: "Stable machine code an agent branches on, e.g. \"over_mandate\"\
+            \ | \"rate_limited\"."
+          type: string
+        retry_after:
+          description: Valid-retry hint in seconds; absent when the call must not
+            be retried as-is.
+          type: integer
+      required:
+      - status
+      - title
+      - type
+    resolve_request:
+      additionalProperties: {}
+      properties:
+        ref:
+          description: "A2A card URL, signed disclosure id, or CAIP-10 account."
+      required:
+      - ref
+    quote_request:
+      additionalProperties: {}
+      properties:
+        what:
+          description: Merchant reference / product query.
+        constraints:
+          additionalProperties: {}
+      required:
+      - what
+  securitySchemes:
+    bearerAuth:
+      description: |
+        Bootstrap-only static bearer token. The **target** auth per BUILD-PLAN §8 is
+        OAuth 2.1 + PKCE with DPoP (RFC 9449) sender-constrained, short-lived scoped
+        tokens; static keys are demoted to bootstrap. Modeled as a pluggable hook.
+      scheme: bearer
+      type: http
