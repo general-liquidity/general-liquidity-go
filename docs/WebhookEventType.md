@@ -9,6 +9,14 @@
 
 * `APPROVAL_PENDING` (value: `"approval.pending"`)
 
+* `MEMORY_RECORDED` (value: `"memory.recorded"`)
+
+* `MEMORY_TAINTED` (value: `"memory.tainted"`)
+
+* `MEMORY_ERASED` (value: `"memory.erased"`)
+
+* `MEMORY_CONSOLIDATED` (value: `"memory.consolidated"`)
+
 * `AUDIT_APPENDED` (value: `"audit.appended"`)
 
 

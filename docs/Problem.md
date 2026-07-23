@@ -9,7 +9,7 @@ Name | Type | Description | Notes
 **Status** | **int32** | HTTP status code. | 
 **Detail** | Pointer to **string** | Human-readable explanation specific to this occurrence. | [optional] 
 **Instance** | Pointer to **string** |  | [optional] 
-**Code** | Pointer to **string** | Stable machine code an agent branches on, e.g. \&quot;over_mandate\&quot; | \&quot;rate_limited\&quot;. | [optional] 
+**Code** | Pointer to **string** | Stable machine code an agent branches on, e.g. \&quot;over_mandate\&quot; | \&quot;rate_limited\&quot;. The memory group adds: \&quot;memory.denied\&quot; (403, engine refused a gated write), \&quot;memory.forbidden\&quot; (403, mandate scope/capability refusal), and \&quot;memory.pending\&quot; (202, write parked for operator confirmation).  | [optional] 
 **RetryAfter** | Pointer to **int32** | Valid-retry hint in seconds; absent when the call must not be retried as-is. | [optional] 
 
 ## Methods
