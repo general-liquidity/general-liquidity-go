@@ -36,3 +36,6 @@ go.work.sum
 # Coverage
 *.out
 coverage.txt
+
+# Pinned openapi-generator jar cache (see scripts/generate.sh)
+.codegen-cache/
