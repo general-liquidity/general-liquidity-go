@@ -1,5 +1,5 @@
 /*
-General Liquidity — The Machine Economy API
+General Liquidity: The Machine Economy API
 
 Testing IdentityAPIService
 

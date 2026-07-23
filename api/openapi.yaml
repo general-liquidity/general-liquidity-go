@@ -4,24 +4,14 @@ info:
     name: General Liquidity
     url: https://generalliquidity.com
   description: |
-    General Liquidity (GL) is the governed, unified interface for the machine economy.
-    A caller submits a signed `Intent`; the sovereign gate decides and only the server
-    holds the settle primitive — the caller never reaches it (DESIGN §7, sovereign
-    settle-separation).
-
-    This document is the **single source of truth** for the GL surface. The typed SDK
-    (`packages/sdk`) and the MCP server (`packages/mcp`) are generated projections of
-    this spec via Speakeasy (BUILD-PLAN §5).
-
-    Naming is canonical per `docs/NAMING.md`: verbs are single common English words
-    (`resolve`, `pay`, `verify`, `disclose`, `buy`, `quote`); nouns are concrete singular
-    domain objects (`Intent`, `Mandate`, `Receipt`, `Counterparty`). The wire is
-    `snake_case`; the TypeScript SDK presents `camelCase`. Vendor/protocol names appear
-    only as lowercase `RailId` values, never as verbs or types.
+    General Liquidity (GL) is one governed surface over payment, commerce, identity,
+    and provenance for the machine economy. A caller submits a signed `Intent`, a
+    deny-first gate decides, and only the server holds the settle primitive, so the
+    caller never does. The wire convention is `snake_case`.
   license:
-    name: Apache-2.0
-  title: General Liquidity — The Machine Economy API
-  version: 2026-07-22
+    name: MIT
+  title: "General Liquidity: The Machine Economy API"
+  version: 2026-07-23
 servers:
 - description: Hosted gateway (holds the settle primitive).
   url: https://api.generalliquidity.com
@@ -38,6 +28,14 @@ tags:
   name: commerce
 - description: "Read the signed, hash-linked audit trail."
   name: governance
+- description: |
+    Human operator controls over the settle path (approve · refund · kill switch ·
+    circuit breaker). A SEPARATE authorization domain from the agent's bearer token:
+    these routes are gated only by the `GL-Operator` credential, a detached ed25519
+    signature the hosted server can verify but cannot mint, and the agent's
+    `Authorization` is never consulted here. An agent credential therefore cannot
+    perform an operator action.
+  name: operator
 paths:
   /resolve:
     post:
@@ -266,6 +264,152 @@ paths:
       tags:
       - commerce
       x-beta: true
+  /operator/approve:
+    post:
+      description: |
+        The network half of the parked-intent flow. A caller who received an
+        `approval.pending` problem holds exactly the fields this route needs — the
+        intent id, the matched mandate id, and the challenge that binds an approval to
+        that intent. The kernel's own preconditions are preserved: a hard deny cannot
+        be approved away, and a high-risk, irreversible or large intent that arrives
+        without an explicit `acknowledged` comes back as another `approval.pending`
+        (the settler's challenge-response), never a settlement.
+      operationId: operatorApprove
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperatorApprove'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Receipt'
+          description: Approved and settled. The durable Receipt.
+        "202":
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+          description: The settler withheld release pending explicit acknowledgement.
+        "400":
+          $ref: '#/components/responses/Problem'
+        "401":
+          $ref: '#/components/responses/Problem'
+        "409":
+          $ref: '#/components/responses/Problem'
+        "413":
+          $ref: '#/components/responses/Problem'
+        "429":
+          $ref: '#/components/responses/Problem'
+      security:
+      - operatorAuth: []
+      summary: Release a parked (confirm-tier) intent to settlement.
+      tags:
+      - operator
+  /operator/refund:
+    post:
+      description: |
+        Reverse a settled payment, resolving to the PSP that issued the receipt.
+        Refusing an irreversible refund is a safety property, not a limitation: a
+        settlement on an irreversible rail comes back `operator.refused`.
+      operationId: operatorRefund
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperatorRefund'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefundResult'
+          description: The refund result.
+        "400":
+          $ref: '#/components/responses/Problem'
+        "401":
+          $ref: '#/components/responses/Problem'
+        "409":
+          $ref: '#/components/responses/Problem'
+        "413":
+          $ref: '#/components/responses/Problem'
+        "429":
+          $ref: '#/components/responses/Problem'
+      security:
+      - operatorAuth: []
+      summary: Reverse a settled payment on a reversible rail.
+      tags:
+      - operator
+  /operator/kill-switch:
+    post:
+      description: |
+        Engage or disengage the kill switch. While engaged, no payment settles — the
+        agent cannot write this flag, so it is a genuine operator brake for an
+        incident. The two directions are signed separately, so an "unfreeze"
+        credential cannot be replayed as a freeze.
+      operationId: operatorKillSwitch
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperatorKillSwitch'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperatorStateView'
+          description: The live halt state after the operation.
+        "400":
+          $ref: '#/components/responses/Problem'
+        "401":
+          $ref: '#/components/responses/Problem'
+        "413":
+          $ref: '#/components/responses/Problem'
+        "429":
+          $ref: '#/components/responses/Problem'
+      security:
+      - operatorAuth: []
+      summary: Freeze or unfreeze the settle path.
+      tags:
+      - operator
+  /operator/circuit-breaker/reset:
+    post:
+      description: |
+        Reset the circuit breaker after it trips on consecutive blocks or failures,
+        re-enabling auto-execution. An operator-only control.
+      operationId: operatorResetCircuitBreaker
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperatorRationale'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperatorStateView'
+          description: The live halt state after the reset.
+        "400":
+          $ref: '#/components/responses/Problem'
+        "401":
+          $ref: '#/components/responses/Problem'
+        "413":
+          $ref: '#/components/responses/Problem'
+        "429":
+          $ref: '#/components/responses/Problem'
+      security:
+      - operatorAuth: []
+      summary: Clear a tripped circuit breaker.
+      tags:
+      - operator
 components:
   parameters:
     IdempotencyKey:
@@ -300,6 +444,7 @@ components:
       - ucp
       - card
       - onchain
+      - l402
       type: string
     Outcome:
       description: The gate's verdict. Deny-first.
@@ -571,23 +716,73 @@ components:
       - terms
     Disclosure:
       additionalProperties: {}
-      description: A signed self-description (identity + provenance). GL's disclosure
-        format.
+      description: |
+        A signed self-description (identity + provenance). GL's disclosure format. BREAKING CHANGE (version 2026-07-23): collapsed onto the full signed envelope. The prior shape {agent_id, document, signature: string} carried a single key and could not express key rotation; it is replaced by the structured ed25519 signature and an optional rotation_chain. The wire shape now equals the signed envelope both sides exchange, so a rotated signing key can disclose while the stable agent id (document.agentId) is preserved. No agent_id at the top level: it lives in the signed document.
       example:
-        agent_id: agent_id
-        signature: signature
+        rotation_chain:
+        - signature: signature
+          from: from
+          to: to
+          type: rotation
+          rotated_at: 2000-01-23T04:56:07.000+00:00
+        - signature: signature
+          from: from
+          to: to
+          type: rotation
+          rotated_at: 2000-01-23T04:56:07.000+00:00
+        signature:
+          public_key: public_key
+          value: value
+          algorithm: ed25519
         document: "{}"
       properties:
-        agent_id:
-          description: Equals the ed25519 public key.
         document:
           additionalProperties: false
+          description: |
+            The signed disclosure document (an AgentDisclosure). Its `agentId` field is the stable identity the signature (and any rotation_chain) roots at.
         signature:
-          type: string
+          $ref: '#/components/schemas/Disclosure_signature'
+        rotation_chain:
+          description: |
+            Present only when the signing key has rotated away from document.agentId; links the stable id to signature.public_key. Absent in the common no-rotation case.
+          items:
+            $ref: '#/components/schemas/KeyRotationStatement'
       required:
-      - agent_id
       - document
       - signature
+    KeyRotationStatement:
+      additionalProperties: false
+      description: |
+        One signed hop of a key-rotation chain: the old key signs the move to the new key, so an identity survives a key change (an agentId IS its public key).
+      example:
+        signature: signature
+        from: from
+        to: to
+        type: rotation
+        rotated_at: 2000-01-23T04:56:07.000+00:00
+      properties:
+        type:
+          enum:
+          - rotation
+          type: string
+        from:
+          description: agentId (public key hex) being rotated away from.
+          type: string
+        to:
+          description: agentId (public key hex) being rotated to.
+          type: string
+        rotated_at:
+          format: date-time
+          type: string
+        signature:
+          description: "Old key's signature over {type, from, to, rotated_at} (hex)."
+          type: string
+      required:
+      - from
+      - rotated_at
+      - signature
+      - to
+      - type
     Counterparty:
       additionalProperties: {}
       description: "A normalized, resolved identity + accepted rails + trust."
@@ -767,6 +962,122 @@ components:
       - status
       - title
       - type
+    OperatorApprove:
+      additionalProperties: false
+      description: |
+        Resume material for a parked intent, exactly as carried on an `approval.pending`
+        problem, plus the operator's rationale and challenge-response acknowledgement.
+      example:
+        acknowledged: true
+        challenge: challenge
+        mandate_id: mandate_id
+        intent_id: intent_id
+        rationale: rationale
+      properties:
+        intent_id:
+          description: The parked intent id.
+          type: string
+        challenge:
+          description: The opaque challenge that binds this approval to that intent.
+            Not a bearer credential.
+          type: string
+        mandate_id:
+          description: The mandate the gate matched when it parked the intent.
+          type: string
+        rationale:
+          description: Why the operator is releasing it. Recorded in the signed audit
+            chain.
+          minLength: 10
+          type: string
+        acknowledged:
+          description: |
+            Explicit challenge-response acknowledgement. Never inferred: a high-risk,
+            irreversible or large intent is not released unless this is `true`.
+          type: boolean
+      required:
+      - acknowledged
+      - challenge
+      - intent_id
+      - mandate_id
+      - rationale
+    OperatorRefund:
+      additionalProperties: false
+      example:
+        intent_id: intent_id
+        rationale: rationale
+        amount_minor: 1
+      properties:
+        intent_id:
+          type: string
+        amount_minor:
+          description: "Minor units to refund. Omitted, the full outstanding amount."
+          minimum: 1
+          type: integer
+        rationale:
+          minLength: 10
+          type: string
+      required:
+      - intent_id
+      - rationale
+    OperatorKillSwitch:
+      additionalProperties: false
+      example:
+        engaged: true
+        rationale: rationale
+      properties:
+        engaged:
+          description: True freezes the settle path; false releases it. Signed separately
+            per direction.
+          type: boolean
+        rationale:
+          minLength: 10
+          type: string
+      required:
+      - engaged
+      - rationale
+    OperatorRationale:
+      additionalProperties: false
+      example:
+        rationale: rationale
+      properties:
+        rationale:
+          minLength: 10
+          type: string
+      required:
+      - rationale
+    RefundResult:
+      additionalProperties: false
+      example:
+        reason: reason
+        ok: true
+        refunded_minor: 0
+      properties:
+        ok:
+          type: boolean
+        refunded_minor:
+          description: Cumulative minor units refunded against the intent.
+          type: integer
+        reason:
+          description: "Present on refusal, e.g. an irreversible settlement."
+          type: string
+      required:
+      - ok
+      - refunded_minor
+    OperatorStateView:
+      additionalProperties: false
+      description: "The live halt state, returned so an operator sees the effect of\
+        \ what they just did."
+      example:
+        circuit_breaker_open: true
+        kill_switch_engaged: true
+      properties:
+        kill_switch_engaged:
+          type: boolean
+        circuit_breaker_open:
+          type: boolean
+      required:
+      - circuit_breaker_open
+      - kill_switch_engaged
     resolve_request:
       additionalProperties: {}
       properties:
@@ -783,6 +1094,26 @@ components:
           additionalProperties: {}
       required:
       - what
+    Disclosure_signature:
+      additionalProperties: false
+      description: The ed25519 signature over the canonicalized document.
+      example:
+        public_key: public_key
+        value: value
+        algorithm: ed25519
+      properties:
+        algorithm:
+          enum:
+          - ed25519
+        public_key:
+          description: |
+            Signer's public key (hex). Equals document.agentId in the common case; under rotation it is the current key at the tip of rotation_chain.
+        value:
+          description: Signature over the canonicalized document (hex).
+      required:
+      - algorithm
+      - public_key
+      - value
   securitySchemes:
     bearerAuth:
       description: |
@@ -791,3 +1122,15 @@ components:
         tokens; static keys are demoted to bootstrap. Modeled as a pluggable hook.
       scheme: bearer
       type: http
+    operatorAuth:
+      description: |
+        Operator authority for `/operator/*`, a SEPARATE authorization domain from
+        `bearerAuth`. The header carries a detached ed25519 signature over the canonical
+        request (operation · method · URL · timestamp · single-use nonce · body digest).
+        The hosted server holds only the operator PUBLIC keys, so it cannot mint this
+        credential even for itself, and the agent's bearer token grants nothing on these
+        routes. That structural separation is the product's core control: an agent
+        credential can never perform an operator action.
+      in: header
+      name: GL-Operator
+      type: apiKey

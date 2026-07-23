@@ -158,7 +158,7 @@ import (
 )
 
 func main() {
-	disclosure := *openapiclient.NewDisclosure("AgentId_example", map[string]interface{}(123), "Signature_example") // Disclosure | 
+	disclosure := *openapiclient.NewDisclosure(map[string]interface{}(123), *openapiclient.NewDisclosureSignature("Algorithm_example", "PublicKey_example", "Value_example")) // Disclosure | 
 
 	configuration := openapiclient.NewConfiguration()
 	apiClient := openapiclient.NewAPIClient(configuration)

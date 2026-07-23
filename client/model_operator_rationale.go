@@ -16,87 +16,59 @@ import (
 	"fmt"
 )
 
-// checks if the Amount type satisfies the MappedNullable interface at compile time
-var _ MappedNullable = &Amount{}
+// checks if the OperatorRationale type satisfies the MappedNullable interface at compile time
+var _ MappedNullable = &OperatorRationale{}
 
-// Amount struct for Amount
-type Amount struct {
-	// Minor units / atomic, carried as a string to avoid float loss.
-	Value string `json:"value"`
-	// Currency code or CAIP-19 asset id.
-	Asset string `json:"asset"`
+// OperatorRationale struct for OperatorRationale
+type OperatorRationale struct {
+	Rationale string `json:"rationale"`
 }
 
-type _Amount Amount
+type _OperatorRationale OperatorRationale
 
-// NewAmount instantiates a new Amount object
+// NewOperatorRationale instantiates a new OperatorRationale object
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewAmount(value string, asset string) *Amount {
-	this := Amount{}
-	this.Value = value
-	this.Asset = asset
+func NewOperatorRationale(rationale string) *OperatorRationale {
+	this := OperatorRationale{}
+	this.Rationale = rationale
 	return &this
 }
 
-// NewAmountWithDefaults instantiates a new Amount object
+// NewOperatorRationaleWithDefaults instantiates a new OperatorRationale object
 // This constructor will only assign default values to properties that have it defined,
 // but it doesn't guarantee that properties required by API are set
-func NewAmountWithDefaults() *Amount {
-	this := Amount{}
+func NewOperatorRationaleWithDefaults() *OperatorRationale {
+	this := OperatorRationale{}
 	return &this
 }
 
-// GetValue returns the Value field value
-func (o *Amount) GetValue() string {
+// GetRationale returns the Rationale field value
+func (o *OperatorRationale) GetRationale() string {
 	if o == nil {
 		var ret string
 		return ret
 	}
 
-	return o.Value
+	return o.Rationale
 }
 
-// GetValueOk returns a tuple with the Value field value
+// GetRationaleOk returns a tuple with the Rationale field value
 // and a boolean to check if the value has been set.
-func (o *Amount) GetValueOk() (*string, bool) {
+func (o *OperatorRationale) GetRationaleOk() (*string, bool) {
 	if o == nil {
 		return nil, false
 	}
-	return &o.Value, true
+	return &o.Rationale, true
 }
 
-// SetValue sets field value
-func (o *Amount) SetValue(v string) {
-	o.Value = v
+// SetRationale sets field value
+func (o *OperatorRationale) SetRationale(v string) {
+	o.Rationale = v
 }
 
-// GetAsset returns the Asset field value
-func (o *Amount) GetAsset() string {
-	if o == nil {
-		var ret string
-		return ret
-	}
-
-	return o.Asset
-}
-
-// GetAssetOk returns a tuple with the Asset field value
-// and a boolean to check if the value has been set.
-func (o *Amount) GetAssetOk() (*string, bool) {
-	if o == nil {
-		return nil, false
-	}
-	return &o.Asset, true
-}
-
-// SetAsset sets field value
-func (o *Amount) SetAsset(v string) {
-	o.Asset = v
-}
-
-func (o Amount) MarshalJSON() ([]byte, error) {
+func (o OperatorRationale) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
 		return []byte{}, err
@@ -104,20 +76,18 @@ func (o Amount) MarshalJSON() ([]byte, error) {
 	return json.Marshal(toSerialize)
 }
 
-func (o Amount) ToMap() (map[string]interface{}, error) {
+func (o OperatorRationale) ToMap() (map[string]interface{}, error) {
 	toSerialize := map[string]interface{}{}
-	toSerialize["value"] = o.Value
-	toSerialize["asset"] = o.Asset
+	toSerialize["rationale"] = o.Rationale
 	return toSerialize, nil
 }
 
-func (o *Amount) UnmarshalJSON(data []byte) (err error) {
+func (o *OperatorRationale) UnmarshalJSON(data []byte) (err error) {
 	// This validates that all required properties are included in the JSON object
 	// by unmarshalling the object into a generic map with string keys and checking
 	// that every required field exists as a key in the generic map.
 	requiredProperties := []string{
-		"value",
-		"asset",
+		"rationale",
 	}
 
 	allProperties := make(map[string]interface{})
@@ -134,53 +104,53 @@ func (o *Amount) UnmarshalJSON(data []byte) (err error) {
 		}
 	}
 
-	varAmount := _Amount{}
+	varOperatorRationale := _OperatorRationale{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	err = decoder.Decode(&varAmount)
+	err = decoder.Decode(&varOperatorRationale)
 
 	if err != nil {
 		return err
 	}
 
-	*o = Amount(varAmount)
+	*o = OperatorRationale(varOperatorRationale)
 
 	return err
 }
 
-type NullableAmount struct {
-	value *Amount
+type NullableOperatorRationale struct {
+	value *OperatorRationale
 	isSet bool
 }
 
-func (v NullableAmount) Get() *Amount {
+func (v NullableOperatorRationale) Get() *OperatorRationale {
 	return v.value
 }
 
-func (v *NullableAmount) Set(val *Amount) {
+func (v *NullableOperatorRationale) Set(val *OperatorRationale) {
 	v.value = val
 	v.isSet = true
 }
 
-func (v NullableAmount) IsSet() bool {
+func (v NullableOperatorRationale) IsSet() bool {
 	return v.isSet
 }
 
-func (v *NullableAmount) Unset() {
+func (v *NullableOperatorRationale) Unset() {
 	v.value = nil
 	v.isSet = false
 }
 
-func NewNullableAmount(val *Amount) *NullableAmount {
-	return &NullableAmount{value: val, isSet: true}
+func NewNullableOperatorRationale(val *OperatorRationale) *NullableOperatorRationale {
+	return &NullableOperatorRationale{value: val, isSet: true}
 }
 
-func (v NullableAmount) MarshalJSON() ([]byte, error) {
+func (v NullableOperatorRationale) MarshalJSON() ([]byte, error) {
 	return json.Marshal(v.value)
 }
 
-func (v *NullableAmount) UnmarshalJSON(src []byte) error {
+func (v *NullableOperatorRationale) UnmarshalJSON(src []byte) error {
 	v.isSet = true
 	return json.Unmarshal(src, &v.value)
 }

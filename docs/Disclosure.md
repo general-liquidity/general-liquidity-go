@@ -4,15 +4,15 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**AgentId** | **string** | Equals the ed25519 public key. | 
-**Document** | **map[string]interface{}** |  | 
-**Signature** | **string** |  | 
+**Document** | **map[string]interface{}** | The signed disclosure document (an AgentDisclosure). Its &#x60;agentId&#x60; field is the stable identity the signature (and any rotation_chain) roots at.  | 
+**Signature** | [**DisclosureSignature**](DisclosureSignature.md) |  | 
+**RotationChain** | Pointer to [**[]KeyRotationStatement**](KeyRotationStatement.md) | Present only when the signing key has rotated away from document.agentId; links the stable id to signature.public_key. Absent in the common no-rotation case.  | [optional] 
 
 ## Methods
 
 ### NewDisclosure
 
-`func NewDisclosure(agentId string, document map[string]interface{}, signature string, ) *Disclosure`
+`func NewDisclosure(document map[string]interface{}, signature DisclosureSignature, ) *Disclosure`
 
 NewDisclosure instantiates a new Disclosure object
 This constructor will assign default values to properties that have it defined,
@@ -26,26 +26,6 @@ will change when the set of required properties is changed
 NewDisclosureWithDefaults instantiates a new Disclosure object
 This constructor will only assign default values to properties that have it defined,
 but it doesn't guarantee that properties required by API are set
-
-### GetAgentId
-
-`func (o *Disclosure) GetAgentId() string`
-
-GetAgentId returns the AgentId field if non-nil, zero value otherwise.
-
-### GetAgentIdOk
-
-`func (o *Disclosure) GetAgentIdOk() (*string, bool)`
-
-GetAgentIdOk returns a tuple with the AgentId field if it's non-nil, zero value otherwise
-and a boolean to check if the value has been set.
-
-### SetAgentId
-
-`func (o *Disclosure) SetAgentId(v string)`
-
-SetAgentId sets AgentId field to given value.
-
 
 ### GetDocument
 
@@ -69,23 +49,48 @@ SetDocument sets Document field to given value.
 
 ### GetSignature
 
-`func (o *Disclosure) GetSignature() string`
+`func (o *Disclosure) GetSignature() DisclosureSignature`
 
 GetSignature returns the Signature field if non-nil, zero value otherwise.
 
 ### GetSignatureOk
 
-`func (o *Disclosure) GetSignatureOk() (*string, bool)`
+`func (o *Disclosure) GetSignatureOk() (*DisclosureSignature, bool)`
 
 GetSignatureOk returns a tuple with the Signature field if it's non-nil, zero value otherwise
 and a boolean to check if the value has been set.
 
 ### SetSignature
 
-`func (o *Disclosure) SetSignature(v string)`
+`func (o *Disclosure) SetSignature(v DisclosureSignature)`
 
 SetSignature sets Signature field to given value.
 
+
+### GetRotationChain
+
+`func (o *Disclosure) GetRotationChain() []KeyRotationStatement`
+
+GetRotationChain returns the RotationChain field if non-nil, zero value otherwise.
+
+### GetRotationChainOk
+
+`func (o *Disclosure) GetRotationChainOk() (*[]KeyRotationStatement, bool)`
+
+GetRotationChainOk returns a tuple with the RotationChain field if it's non-nil, zero value otherwise
+and a boolean to check if the value has been set.
+
+### SetRotationChain
+
+`func (o *Disclosure) SetRotationChain(v []KeyRotationStatement)`
+
+SetRotationChain sets RotationChain field to given value.
+
+### HasRotationChain
+
+`func (o *Disclosure) HasRotationChain() bool`
+
+HasRotationChain returns a boolean if a field has been set.
 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
