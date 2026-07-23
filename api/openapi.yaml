@@ -11,7 +11,7 @@ info:
   license:
     name: MIT
   title: "General Liquidity: The Machine Economy API"
-  version: 2026-07-23
+  version: 2026-07-24
 servers:
 - description: Hosted gateway (holds the settle primitive).
   url: https://api.generalliquidity.com
@@ -26,8 +26,15 @@ tags:
   name: money
 - description: Merchant checkout over ACP / UCP. Beta.
   name: commerce
-- description: "Read the signed, hash-linked audit trail."
+- description: |
+    Read the signed, hash-linked audit trail — the `/audit` list + stream, the async job
+    resource (`/intents/{id}`), and metered usage.
   name: governance
+- description: |
+    Manage outbound webhook endpoints. Events are derived from the signed audit chain and
+    signed with a per-endpoint `whsec_` secret (the `GL-Signature` header). Management is
+    OPERATOR-privileged: gated by the `GL-Operator` credential, never the agent bearer token.
+  name: webhooks
 - description: |
     Human operator controls over the settle path (approve · refund · kill switch ·
     circuit breaker). A SEPARATE authorization domain from the agent's bearer token:
@@ -164,42 +171,343 @@ paths:
       - identity
   /audit:
     get:
+      description: |
+        Returns a `Page` envelope of signed audit events, keyed on the audit `seq`. Pass
+        `cursor` (from a prior page's `next_cursor`) to resume; a `limit`-only call with no
+        cursor returns the first page, so the legacy bare-`limit` request keeps working. A
+        malformed or stale cursor is a `400 intent.malformed`.
       operationId: audit
       parameters:
-      - description: Filter events to a single Intent's idempotency key.
-        explode: true
-        in: query
-        name: intent_key
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/audit_200_response'
+          description: A page of signed audit events.
+          headers:
+            X-RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            X-RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+            X-RateLimit-Reset:
+              $ref: '#/components/headers/RateLimitReset'
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+        "400":
+          $ref: '#/components/responses/Problem'
+        "401":
+          $ref: '#/components/responses/Problem'
+        "429":
+          $ref: '#/components/responses/Problem'
+      summary: "Read the signed, hash-linked audit trail (cursor-paginated)."
+      tags:
+      - governance
+  /audit/stream:
+    get:
+      description: |
+        A read/observe surface over the SAME signed audit chain `/audit` pages. Returns a
+        `text/event-stream`: each appended entry is one SSE frame (`id:` = the audit `seq`,
+        `event:` = the entry type, `data:` = the entry). A reconnecting client sends
+        `Last-Event-ID` (the last `seq` it saw) to replay missed entries before joining the
+        live fan-out. Never moves money and never writes the chain. Default-off: absent an
+        event-stream backing, this route is a 404.
+      operationId: auditStream
+      parameters:
+      - description: "The last audit `seq` the client received, for gap-free resume."
+        explode: false
+        in: header
+        name: Last-Event-ID
         required: false
         schema:
           type: string
-        style: form
-      - explode: true
+        style: simple
+      responses:
+        "200":
+          content:
+            text/event-stream:
+              schema:
+                description: SSE frames; each `data:` line is an AuditEvent JSON object.
+                type: string
+          description: An open SSE stream of audit entries.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+        "401":
+          $ref: '#/components/responses/Problem'
+        "404":
+          $ref: '#/components/responses/Problem'
+        "429":
+          $ref: '#/components/responses/Problem'
+      summary: Subscribe to the signed audit chain as Server-Sent Events.
+      tags:
+      - governance
+  /intents/{id}:
+    get:
+      description: |
+        A first-class read projection over an intent's confirm-park-approve lifecycle: a
+        stable id, a terminal-state enum, the settlement receipt on a settled job, the RFC
+        9457 problem on a denied/failed job, and the resume material (challenge + mandate)
+        on a still-pending job. Derived from the persisted intent + the signed audit trail.
+        Default-off: absent the job wiring, this route is a 404.
+      operationId: getIntent
+      parameters:
+      - description: The intent's idempotency key — the stable resource id.
+        explode: false
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+          description: The job resource.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+        "401":
+          $ref: '#/components/responses/Problem'
+        "404":
+          $ref: '#/components/responses/Problem'
+        "429":
+          $ref: '#/components/responses/Problem'
+      summary: Read the async job resource for one intent.
+      tags:
+      - governance
+  /intents/{id}/events:
+    get:
+      operationId: getIntentEvents
+      parameters:
+      - explode: false
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+        style: simple
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/audit_200_response'
+          description: A page of the intent's signed audit events.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+        "400":
+          $ref: '#/components/responses/Problem'
+        "401":
+          $ref: '#/components/responses/Problem'
+        "404":
+          $ref: '#/components/responses/Problem'
+        "429":
+          $ref: '#/components/responses/Problem'
+      summary: List one intent's audit events (cursor-paginated).
+      tags:
+      - governance
+  /usage:
+    get:
+      description: |
+        Call counting only — no prices, no billing. Aggregates the authenticated principal's
+        calls over a half-open window `[since, until)`, optionally filtered to calls carrying
+        EVERY listed tag (AND semantics). Tags are UNSIGNED per-request attribution supplied
+        via the `X-GL-Tags` header; they never touch the Intent or the gate decision.
+        Default-off: absent a usage store, this route is a 404 and nothing is recorded.
+      operationId: getUsage
+      parameters:
+      - description: ISO-8601 inclusive lower bound.
+        explode: true
         in: query
-        name: limit
+        name: since
+        required: true
+        schema:
+          format: date-time
+          type: string
+        style: form
+      - description: ISO-8601 exclusive upper bound.
+        explode: true
+        in: query
+        name: until
+        required: true
+        schema:
+          format: date-time
+          type: string
+        style: form
+      - description: Repeatable; count only calls carrying every listed tag.
+        explode: true
+        in: query
+        name: tags
         required: false
         schema:
-          default: 100
-          maximum: 1000
-          minimum: 1
-          type: integer
+          items:
+            type: string
+          type: array
         style: form
       responses:
         "200":
           content:
             application/json:
               schema:
-                items:
-                  $ref: '#/components/schemas/AuditEvent'
-                type: array
-          description: A page of signed audit events.
+                $ref: '#/components/schemas/UsageSummary'
+          description: The usage summary.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+        "400":
+          $ref: '#/components/responses/Problem'
         "401":
+          $ref: '#/components/responses/Problem'
+        "404":
           $ref: '#/components/responses/Problem'
         "429":
           $ref: '#/components/responses/Problem'
-      summary: "Read the signed, hash-linked audit trail."
+      summary: Read metered call counts for the authenticated principal.
       tags:
       - governance
+  /webhooks/endpoints:
+    get:
+      operationId: listWebhookEndpoints
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/listWebhookEndpoints_200_response'
+          description: The registered endpoints (secrets redacted).
+        "401":
+          $ref: '#/components/responses/Problem'
+        "404":
+          $ref: '#/components/responses/Problem'
+      security:
+      - operatorAuth: []
+      summary: List webhook endpoints. (Operator authority)
+      tags:
+      - webhooks
+    post:
+      description: |
+        Registers an endpoint that receives signed events derived from the audit chain. An
+        endpoint that receives settlement/audit events is OPERATOR-privileged, so this route
+        is gated by the `GL-Operator` credential channel, not the agent bearer token. The
+        `whsec_` signing secret is returned ONCE, on this call; the reads never re-expose it.
+        Default-off: absent a webhook store, this route is a 404.
+      operationId: createWebhookEndpoint
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/createWebhookEndpoint_request'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookEndpointCreated'
+          description: "The created endpoint, including its one-time secret."
+        "400":
+          $ref: '#/components/responses/Problem'
+        "401":
+          $ref: '#/components/responses/Problem'
+        "404":
+          $ref: '#/components/responses/Problem'
+      security:
+      - operatorAuth: []
+      summary: Register a webhook endpoint. (Operator authority)
+      tags:
+      - webhooks
+  /webhooks/endpoints/{id}:
+    delete:
+      operationId: deleteWebhookEndpoint
+      parameters:
+      - explode: false
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+        style: simple
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: '#/components/responses/Problem'
+        "404":
+          $ref: '#/components/responses/Problem'
+      security:
+      - operatorAuth: []
+      summary: Delete one webhook endpoint. (Operator authority)
+      tags:
+      - webhooks
+    get:
+      operationId: getWebhookEndpoint
+      parameters:
+      - explode: false
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookEndpoint'
+          description: The endpoint (secret redacted).
+        "401":
+          $ref: '#/components/responses/Problem'
+        "404":
+          $ref: '#/components/responses/Problem'
+      security:
+      - operatorAuth: []
+      summary: Read one webhook endpoint. (Operator authority)
+      tags:
+      - webhooks
+    patch:
+      operationId: updateWebhookEndpoint
+      parameters:
+      - explode: false
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+        style: simple
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/updateWebhookEndpoint_request'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookEndpoint'
+          description: The updated endpoint (secret redacted).
+        "400":
+          $ref: '#/components/responses/Problem'
+        "401":
+          $ref: '#/components/responses/Problem'
+        "404":
+          $ref: '#/components/responses/Problem'
+      security:
+      - operatorAuth: []
+      summary: Update one webhook endpoint. (Operator authority)
+      tags:
+      - webhooks
   /buy:
     post:
       description: |
@@ -411,6 +719,39 @@ paths:
       tags:
       - operator
 components:
+  headers:
+    RateLimitLimit:
+      description: The request ceiling for the current fixed window (RFC draft `X-RateLimit-*`).
+      explode: false
+      schema: {}
+      style: simple
+    RateLimitRemaining:
+      description: Requests left in the current window after this one (0 on a 429).
+      explode: false
+      schema: {}
+      style: simple
+    RateLimitReset:
+      description: Unix SECONDS of the current window's edge.
+      explode: false
+      schema: {}
+      style: simple
+    RequestId:
+      description: |
+        Correlation id, on EVERY response. Echoed from a well-formed inbound `X-Request-Id` /
+        `Request-Id`, otherwise minted fresh, so a client can quote it in a support ticket and
+        an operator can grep the audit trail for exactly that call.
+      explode: false
+      schema: {}
+      style: simple
+    GLSignature:
+      description: |
+        `GL-Signature: t=<unix_seconds>,v1=<hex_hmac>` on every webhook delivery. `v1` is the
+        hex HMAC-SHA256 of the ASCII `"{t}.{rawBody}"` under the endpoint's `whsec_` secret. A
+        receiver recomputes it over the untouched received body to authenticate the callback.
+      explode: false
+      schema:
+        type: string
+      style: simple
   parameters:
     IdempotencyKey:
       description: |
@@ -425,6 +766,28 @@ components:
         minLength: 1
         type: string
       style: simple
+    Cursor:
+      description: Opaque token from a prior page's `next_cursor`. Absent means "from
+        the start".
+      explode: true
+      in: query
+      name: cursor
+      required: false
+      schema:
+        type: string
+      style: form
+    Limit:
+      description: "Page size, clamped to [1, 100]; defaults to 20."
+      explode: true
+      in: query
+      name: limit
+      required: false
+      schema:
+        default: 20
+        maximum: 100
+        minimum: 1
+        type: integer
+      style: form
   responses:
     Problem:
       content:
@@ -544,6 +907,7 @@ components:
           description: ISO-8601 duration for the period cap window.
         expires_at:
           format: date-time
+          type: string
         constraints:
           additionalProperties: {}
       required:
@@ -805,7 +1169,8 @@ components:
           - disclosure
           - caip
         capabilities:
-          items: {}
+          items:
+            type: string
         rails:
           items:
             $ref: '#/components/schemas/RailId'
@@ -831,6 +1196,7 @@ components:
             ."
         at:
           format: date-time
+          type: string
         intent_key:
           type: string
         prev:
@@ -840,6 +1206,219 @@ components:
       required:
       - at
       - payload
+      - type
+    Page:
+      description: |
+        A cursor-paginated page envelope. `data` holds the items; `next_cursor` names the last
+        item so the next call resumes strictly after it (no overlap, no gap). Concrete `data`
+        item types are given by the referencing operation.
+      properties:
+        data:
+          items: {}
+          type: array
+        has_more:
+          description: True when items remain after this page.
+          type: boolean
+        next_cursor:
+          description: "Token for the next page, or null when `has_more` is false."
+          nullable: true
+          type: string
+      required:
+      - data
+      - has_more
+      - next_cursor
+    JobStatus:
+      description: |
+        Terminal-state enum for a job, grounded one-for-one in the store states. `pending` is
+        the only non-terminal state (parked, awaiting operator approval).
+      enum:
+      - pending
+      - settled
+      - denied
+      - failed
+      type: string
+    Job:
+      additionalProperties: {}
+      description: A read projection over an intent's confirm-park-approve lifecycle.
+      example:
+        problem:
+          instance: https://openapi-generator.tech
+          code: code
+          detail: detail
+          retry_after: 6
+          type: https://openapi-generator.tech
+          title: title
+          status: 139
+        terminal_at: 2000-01-23T04:56:07.000+00:00
+        pending:
+          mandateId: mandateId
+          challenge: challenge
+        created_at: 2000-01-23T04:56:07.000+00:00
+        receipt:
+          reference: reference
+          intent_key: intent_key
+          terms:
+            credential: credential
+            capital_source: payer
+            rail: null
+            reversibility: reversible
+            finality: instant
+            presence: present
+          rail: x402
+          enforcement: enforcement
+          settled_at: 2000-01-23T04:56:07.000+00:00
+        links:
+          self: self
+          events: events
+        id: id
+        outcome: allow
+        status: pending
+      properties:
+        id:
+          description: The idempotency/intent key — the stable resource id.
+        status:
+          $ref: '#/components/schemas/JobStatus'
+        created_at:
+          description: "The intent's first audit entry, falling back to its settle\
+            \ time."
+          format: date-time
+        terminal_at:
+          description: Set ONLY for terminal states (settled/denied/failed).
+          format: date-time
+        outcome:
+          $ref: '#/components/schemas/Outcome'
+        receipt:
+          $ref: '#/components/schemas/Receipt'
+        problem:
+          $ref: '#/components/schemas/Problem'
+        pending:
+          $ref: '#/components/schemas/Job_pending'
+        links:
+          $ref: '#/components/schemas/Job_links'
+      required:
+      - created_at
+      - id
+      - links
+      - outcome
+      - status
+    UsageSummary:
+      additionalProperties: false
+      description: Metered call counts for one principal over a half-open window.
+        Counts only.
+      example:
+        total: 0
+        keyId: keyId
+        until: 2000-01-23T04:56:07.000+00:00
+        byOutcome:
+          key: 1
+        since: 2000-01-23T04:56:07.000+00:00
+        byOperation:
+          key: 6
+      properties:
+        keyId:
+          type: string
+        since:
+          format: date-time
+          type: string
+        until:
+          format: date-time
+          type: string
+        total:
+          description: Total calls counted in the window (after any tag filter).
+          type: integer
+        byOperation:
+          additionalProperties:
+            type: integer
+          description: "Count keyed by operation, e.g. { pay: 3, resolve: 1 }."
+        byOutcome:
+          additionalProperties:
+            type: integer
+          description: "Count keyed by outcome, e.g. { allow: 2, deny: 1 }."
+      required:
+      - byOperation
+      - byOutcome
+      - keyId
+      - since
+      - total
+      - until
+    WebhookEventType:
+      description: The outbound event types a subscription filters on.
+      enum:
+      - payment.settled
+      - intent.denied
+      - approval.pending
+      - audit.appended
+      type: string
+    WebhookEndpoint:
+      additionalProperties: false
+      description: A registered delivery endpoint as the reads expose it (secret redacted).
+      example:
+        active: true
+        id: id
+        url: https://openapi-generator.tech
+        events:
+        - payment.settled
+        - payment.settled
+      properties:
+        id:
+          type: string
+        url:
+          format: uri
+          type: string
+        events:
+          items:
+            $ref: '#/components/schemas/WebhookEventType'
+          type: array
+        active:
+          type: boolean
+      required:
+      - active
+      - events
+      - id
+      - url
+    WebhookEndpointCreated:
+      allOf:
+      - $ref: '#/components/schemas/WebhookEndpoint'
+      - properties:
+          secret:
+            description: "The `whsec_` HMAC signing secret. Shown ONCE, at create,\
+              \ never again."
+            type: string
+        required:
+        - secret
+      example:
+        active: true
+        id: id
+        secret: secret
+        url: https://openapi-generator.tech
+        events:
+        - payment.settled
+        - payment.settled
+    WebhookEvent:
+      additionalProperties: {}
+      description: |
+        One delivered webhook event, derived from a signed audit entry. `id` is deterministic
+        in the source entry (dedup key across at-least-once retries). Signed with the endpoint's
+        secret via the `GL-Signature` header.
+      properties:
+        id:
+          description: "Deterministic event id, `evt_<audit_hash>`."
+        type:
+          $ref: '#/components/schemas/WebhookEventType'
+        created_at:
+          format: date-time
+          type: string
+        data:
+          additionalProperties: {}
+          description: |
+            The source entry's payload plus the chain coordinates (`audit_seq`, `audit_hash`,
+            `audit_type`) that let a consumer re-verify the underlying signed audit entry. For
+            `payment.settled` a Receipt-shaped record; for `intent.denied` / `approval.pending`
+            the gate Decision; for `audit.appended` the whole AuditEvent.
+      required:
+      - created_at
+      - data
+      - id
       - type
     Order:
       additionalProperties: false
@@ -908,6 +1487,7 @@ components:
             additionalProperties: false
         expires_at:
           format: date-time
+          type: string
       required:
       - id
       - total
@@ -930,6 +1510,14 @@ components:
       description: |
         RFC 7807 problem detail. For an agent the error IS the recovery instruction:
         `code` is a stable machine token to branch on and `retry_after` is a valid-retry hint.
+      example:
+        instance: https://openapi-generator.tech
+        code: code
+        detail: detail
+        retry_after: 6
+        type: https://openapi-generator.tech
+        title: title
+        status: 139
       properties:
         type:
           default: about:blank
@@ -1085,6 +1673,73 @@ components:
           description: "A2A card URL, signed disclosure id, or CAIP-10 account."
       required:
       - ref
+    audit_200_response:
+      allOf:
+      - $ref: '#/components/schemas/Page'
+      - properties:
+          data:
+            items:
+              $ref: '#/components/schemas/AuditEvent'
+            type: array
+      example:
+        next_cursor: next_cursor
+        data:
+        - at: 2000-01-23T04:56:07.000+00:00
+          intent_key: intent_key
+          payload: "{}"
+          prev: prev
+          type: type
+        - at: 2000-01-23T04:56:07.000+00:00
+          intent_key: intent_key
+          payload: "{}"
+          prev: prev
+          type: type
+        has_more: true
+    listWebhookEndpoints_200_response:
+      example:
+        data:
+        - active: true
+          id: id
+          url: https://openapi-generator.tech
+          events:
+          - payment.settled
+          - payment.settled
+        - active: true
+          id: id
+          url: https://openapi-generator.tech
+          events:
+          - payment.settled
+          - payment.settled
+      properties:
+        data:
+          items:
+            $ref: '#/components/schemas/WebhookEndpoint'
+          type: array
+      required:
+      - data
+    createWebhookEndpoint_request:
+      additionalProperties: {}
+      properties:
+        url:
+          format: uri
+        events:
+          items:
+            $ref: '#/components/schemas/WebhookEventType'
+          minItems: 1
+        active:
+          default: true
+      required:
+      - events
+      - url
+    updateWebhookEndpoint_request:
+      additionalProperties: {}
+      properties:
+        url:
+          format: uri
+        events:
+          items:
+            $ref: '#/components/schemas/WebhookEventType'
+        active: {}
     quote_request:
       additionalProperties: {}
       properties:
@@ -1114,6 +1769,30 @@ components:
       - algorithm
       - public_key
       - value
+    Job_pending:
+      additionalProperties: false
+      description: "Resume material, present only on a pending job."
+      example:
+        mandateId: mandateId
+        challenge: challenge
+      properties:
+        mandateId:
+          type: string
+        challenge:
+          description: Opaque challenge an operator approval binds to.
+    Job_links:
+      additionalProperties: false
+      example:
+        self: self
+        events: events
+      properties:
+        self:
+          type: string
+        events:
+          type: string
+      required:
+      - events
+      - self
   securitySchemes:
     bearerAuth:
       description: |
